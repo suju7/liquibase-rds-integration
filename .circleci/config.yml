@@ -1,19 +1,38 @@
 version: 2.1
 
-orbs:
-  aws-cli: circleci/aws-cli@4
-
 jobs:
   liquibase-update:
     docker:
-      - image: liquibase/liquibase:4.33-alpine
+      - image: cimg/openjdk:17.0
     resource_class: small
     steps:
       - checkout
-      - aws-cli/setup
       - run:
-          name: Install MySQL JDBC driver via Liquibase package manager
+          name: Install unzip and curl if missing
           command: |
+            if ! command -v unzip >/dev/null; then sudo apt-get update && sudo apt-get install -y unzip; fi
+            if ! command -v curl >/dev/null; then sudo apt-get update && sudo apt-get install -y curl; fi
+      - run:
+          name: Install AWS CLI v2 (user space) if AUTH_MODE=iam
+          command: |
+            if [ "${AUTH_MODE:-password}" = "iam" ]; then
+              if ! command -v aws >/dev/null 2>&1; then
+                curl -sS "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                unzip -q awscliv2.zip
+                ./aws/install -i "$PWD/.aws-cli" -b "$PWD/.aws-cli-bin"
+                echo 'export PATH="$PWD/.aws-cli-bin:$PATH"' >> $BASH_ENV
+                source $BASH_ENV
+              fi
+            fi
+      - run:
+          name: Install Liquibase CLI and MySQL driver
+          command: |
+            LIQUIBASE_VERSION="4.33.0"
+            curl -sS -L -o liquibase.zip "https://github.com/liquibase/liquibase/releases/download/v${LIQUIBASE_VERSION}/liquibase-${LIQUIBASE_VERSION}.zip"
+            unzip -q liquibase.zip -d liquibase-dist
+            echo 'export PATH="$PWD/liquibase-dist/liquibase:$PATH"' >> $BASH_ENV
+            source $BASH_ENV
+            liquibase --version
             lpm add mysql --global
       - run:
           name: Run Liquibase update
@@ -45,9 +64,6 @@ jobs:
               fi
               PASSWORD="$RDS_PASSWORD"
             fi
-
-            # Optional truststore mounting is not available in CircleCI Docker executor by default.
-            # If needed, bake a custom image with the truststore and set JAVA_TOOL_OPTIONS accordingly.
 
             liquibase \
               --url="$JDBC_URL" \
