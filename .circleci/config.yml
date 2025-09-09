@@ -1,0 +1,70 @@
+version: 2.1
+
+orbs:
+  aws-cli: circleci/aws-cli@4
+
+jobs:
+  liquibase-update:
+    docker:
+      - image: liquibase/liquibase:4.33-alpine
+    resource_class: small
+    steps:
+      - checkout
+      - aws-cli/setup
+      - run:
+          name: Install MySQL JDBC driver via Liquibase package manager
+          command: |
+            lpm add mysql --global
+      - run:
+          name: Run Liquibase update
+          command: |
+            # Build JDBC URL
+            if [ -z "${RDS_ENDPOINT:-}" ]; then
+              echo "RDS_ENDPOINT must be set in CircleCI project env vars" >&2
+              exit 1
+            fi
+            DB_NAME="${RDS_DB_NAME:-liquibaseapp}"
+            USERNAME="${RDS_USERNAME:-username}"
+            AUTH_MODE="${AUTH_MODE:-password}"
+            SSL_MODE="${SSL_MODE:-REQUIRED}"
+            JDBC_URL="jdbc:mysql://${RDS_ENDPOINT}/${DB_NAME}?sslMode=${SSL_MODE}"
+
+            if [ "$AUTH_MODE" = "iam" ]; then
+              if [ -z "${AWS_REGION:-}" ]; then
+                echo "AWS_REGION must be set when AUTH_MODE=iam" >&2
+                exit 1
+              fi
+              HOST="${RDS_ENDPOINT%%:*}"
+              PORT_PART="${RDS_ENDPOINT#*:}"
+              if [ "$PORT_PART" = "$RDS_ENDPOINT" ]; then DB_PORT=3306; else DB_PORT="$PORT_PART"; fi
+              PASSWORD=$(aws rds generate-db-auth-token --hostname "$HOST" --port "$DB_PORT" --region "$AWS_REGION" --username "$USERNAME")
+            else
+              if [ -z "${RDS_PASSWORD:-}" ]; then
+                echo "RDS_PASSWORD must be set when AUTH_MODE=password" >&2
+                exit 1
+              fi
+              PASSWORD="$RDS_PASSWORD"
+            fi
+
+            # Optional truststore mounting is not available in CircleCI Docker executor by default.
+            # If needed, bake a custom image with the truststore and set JAVA_TOOL_OPTIONS accordingly.
+
+            liquibase \
+              --url="$JDBC_URL" \
+              --username="$USERNAME" \
+              --password="$PASSWORD" \
+              --changeLogFile=docker/files/liquibase/changelog/changelog-master.yaml \
+              --log-level=info \
+              update
+
+workflows:
+  liquibase:
+    jobs:
+      - liquibase-update:
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v.*/
+
+
