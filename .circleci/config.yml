@@ -3,72 +3,33 @@ version: 2.1
 jobs:
   liquibase-update:
     docker:
-      - image: cimg/openjdk:17.0
+      - image: liquibase/liquibase:4.33-alpine
     resource_class: small
     steps:
       - checkout
       - run:
-          name: Install unzip and curl if missing
+          name: Install MySQL JDBC driver via Liquibase package manager
           command: |
-            if ! command -v unzip >/dev/null; then sudo apt-get update && sudo apt-get install -y unzip; fi
-            if ! command -v curl >/dev/null; then sudo apt-get update && sudo apt-get install -y curl; fi
-      - run:
-          name: Install AWS CLI v2 (user space) if AUTH_MODE=iam
-          command: |
-            if [ "${AUTH_MODE:-password}" = "iam" ]; then
-              if ! command -v aws >/dev/null 2>&1; then
-                curl -sS "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-                unzip -q awscliv2.zip
-                ./aws/install -i "$PWD/.aws-cli" -b "$PWD/.aws-cli-bin"
-                echo 'export PATH="$PWD/.aws-cli-bin:$PATH"' >> $BASH_ENV
-                source $BASH_ENV
-              fi
-            fi
-      - run:
-          name: Install Liquibase CLI and MySQL driver
-          command: |
-            LIQUIBASE_VERSION="4.33.0"
-            curl -sS -L -o liquibase.zip "https://github.com/liquibase/liquibase/releases/download/v${LIQUIBASE_VERSION}/liquibase-${LIQUIBASE_VERSION}.zip"
-            unzip -q liquibase.zip -d liquibase-dist
-            echo 'export PATH="$PWD/liquibase-dist/liquibase:$PATH"' >> $BASH_ENV
-            source $BASH_ENV
-            liquibase --version
             lpm add mysql --global
       - run:
-          name: Run Liquibase update
+          name: Run Liquibase update (password auth)
           command: |
-            # Build JDBC URL
             if [ -z "${RDS_ENDPOINT:-}" ]; then
               echo "RDS_ENDPOINT must be set in CircleCI project env vars" >&2
               exit 1
             fi
+            if [ -z "${RDS_PASSWORD:-}" ]; then
+              echo "RDS_PASSWORD must be set in CircleCI project env vars" >&2
+              exit 1
+            fi
             DB_NAME="${RDS_DB_NAME:-liquibaseapp}"
             USERNAME="${RDS_USERNAME:-username}"
-            AUTH_MODE="${AUTH_MODE:-password}"
             SSL_MODE="${SSL_MODE:-REQUIRED}"
             JDBC_URL="jdbc:mysql://${RDS_ENDPOINT}/${DB_NAME}?sslMode=${SSL_MODE}"
-
-            if [ "$AUTH_MODE" = "iam" ]; then
-              if [ -z "${AWS_REGION:-}" ]; then
-                echo "AWS_REGION must be set when AUTH_MODE=iam" >&2
-                exit 1
-              fi
-              HOST="${RDS_ENDPOINT%%:*}"
-              PORT_PART="${RDS_ENDPOINT#*:}"
-              if [ "$PORT_PART" = "$RDS_ENDPOINT" ]; then DB_PORT=3306; else DB_PORT="$PORT_PART"; fi
-              PASSWORD=$(aws rds generate-db-auth-token --hostname "$HOST" --port "$DB_PORT" --region "$AWS_REGION" --username "$USERNAME")
-            else
-              if [ -z "${RDS_PASSWORD:-}" ]; then
-                echo "RDS_PASSWORD must be set when AUTH_MODE=password" >&2
-                exit 1
-              fi
-              PASSWORD="$RDS_PASSWORD"
-            fi
-
             liquibase \
               --url="$JDBC_URL" \
               --username="$USERNAME" \
-              --password="$PASSWORD" \
+              --password="$RDS_PASSWORD" \
               --changeLogFile=docker/files/liquibase/changelog/changelog-master.yaml \
               --log-level=info \
               update
