@@ -1,0 +1,41 @@
+services:
+  master-db:
+    build:
+      context: ./
+      dockerfile: Dockerfile-mysql
+    image: master-db:1.0
+    container_name: master-db
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-root}
+    networks:
+      - bankbiz
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+
+  liquibase:
+    build:
+      context: .
+      dockerfile: Dockerfile-liquibase
+    container_name: liquibase
+    depends_on:
+      master-db:
+        condition: service_healthy
+    volumes:
+      - ./files/liquibase/changelog:/liquibase/changelog
+    command: >
+        --url=jdbc:mysql://master-db:3306/master_data
+        --username=${MYSQL_USER:-user}
+        --password=${MYSQL_PASSWORD:-pass}
+        --changeLogFile=changelog/changelog-master.yaml
+        update
+    networks:
+      - bankbiz
+
+networks:
+  bankbiz:
+    driver: bridge

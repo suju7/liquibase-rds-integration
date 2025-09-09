@@ -1,0 +1,7 @@
+FROM mysql:8.0.33
+
+ENV TZ='Asia/Tokyo'
+
+COPY files/mysql/00_create_database.sql /docker-entrypoint-initdb.d/00_create_database.sql
+COPY files/mysql/01_create_user.sql /docker-entrypoint-initdb.d/01_create_user.sql
+COPY files/mysql/conf.d/my.cnf /etc/mysql/conf.d/my.cnf

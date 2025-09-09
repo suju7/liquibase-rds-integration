@@ -1,0 +1,4 @@
+FROM liquibase/liquibase:4.33-alpine
+
+# The JDBC driver for MySQL doesn't come preinstalled into the container image, so we need to add the driver explicitly.
+RUN lpm add mysql --global
